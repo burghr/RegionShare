@@ -1,0 +1,65 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+<title>RegionShare – Select</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; cursor: crosshair; user-select: none;
+    font: 13px -apple-system, "Segoe UI", sans-serif; }
+  body { background: rgba(0, 0, 0, 0.35); }
+  #hint { position: fixed; top: 40px; left: 50%; transform: translateX(-50%);
+    background: rgba(20, 20, 20, 0.85); color: #fff; padding: 10px 16px; border-radius: 8px; }
+  #box { position: fixed; display: none; border: 2px solid #ff3b30;
+    box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.35); background: transparent; }
+  body.dragging { background: transparent; }
+  #size { position: absolute; right: 0; bottom: -26px; background: #ff3b30; color: #fff;
+    padding: 2px 6px; border-radius: 4px; font-size: 12px; white-space: nowrap; }
+</style>
+</head>
+<body>
+<div id="hint">Drag to select the region to share. Press Esc to cancel.</div>
+<div id="box"><div id="size"></div></div>
+<script>
+  const displayId = new URLSearchParams(location.search).get('displayId');
+  const box = document.getElementById('box');
+  const size = document.getElementById('size');
+  const hint = document.getElementById('hint');
+  let start = null;
+  let rect = null;
+
+  function update(e) {
+    const x = Math.min(start.x, e.clientX), y = Math.min(start.y, e.clientY);
+    const w = Math.abs(e.clientX - start.x), h = Math.abs(e.clientY - start.y);
+    rect = { x, y, width: w, height: h };
+    Object.assign(box.style, { left: x + 'px', top: y + 'px', width: w + 'px', height: h + 'px' });
+    size.textContent = `${w} × ${h}`;
+  }
+
+  window.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return;
+    start = { x: e.clientX, y: e.clientY };
+    document.body.classList.add('dragging');
+    hint.style.display = 'none';
+    box.style.display = 'block';
+    update(e);
+  });
+  window.addEventListener('mousemove', (e) => { if (start) update(e); });
+  window.addEventListener('mouseup', () => {
+    if (!start) return;
+    start = null;
+    if (rect && rect.width >= 20 && rect.height >= 20) {
+      window.regionShare.selectionDone({ displayId, ...rect });
+    } else {
+      // The selection is too small. Show the hint again.
+      box.style.display = 'none';
+      hint.style.display = 'block';
+      document.body.classList.remove('dragging');
+    }
+  });
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') window.regionShare.selectionCancel();
+  });
+</script>
+</body>
+</html>

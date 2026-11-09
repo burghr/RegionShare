@@ -1,0 +1,37 @@
+{
+  "name": "regionshare",
+  "productName": "RegionShare",
+  "version": "0.1.0",
+  "description": "Share only a part of your screen in Teams (or any app that can share a window).",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "icons": "node scripts/make-icons.js",
+    "dist:mac": "electron-builder --mac",
+    "dist:win": "electron-builder --win",
+    "app": "electron-builder --mac --dir && open dist/mac-arm64/RegionShare.app"
+  },
+  "author": "burghr",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^45.2.3",
+    "electron-builder": "^26.18.0"
+  },
+  "build": {
+    "appId": "com.burghr.regionshare",
+    "productName": "RegionShare",
+    "files": [
+      "src/**/*",
+      "assets/**/*"
+    ],
+    "mac": {
+      "target": "dmg",
+      "category": "public.app-category.productivity",
+      "notarize": false,
+      "hardenedRuntime": true
+    },
+    "win": {
+      "target": "nsis"
+    }
+  }
+}
