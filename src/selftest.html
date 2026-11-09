@@ -1,0 +1,42 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'unsafe-inline'; media-src 'self' blob: mediastream:">
+<title>RegionShare – Self-test</title>
+</head>
+<body>
+<script>
+  // Capture the mirror window, as Teams does. Send the number of new frames each second.
+  (async () => {
+    const stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 30 }, audio: false });
+    const video = document.createElement('video');
+    video.muted = true;
+    video.srcObject = stream;
+    await video.play();
+    let frames = 0;
+    const tick = () => { frames++; video.requestVideoFrameCallback(tick); };
+    video.requestVideoFrameCallback(tick);
+    // Read the test pixels in the top-left corner of the captured window content.
+    // The mirror page draws them bright green or magenta.
+    const c = document.createElement('canvas');
+    c.width = video.videoWidth;
+    c.height = video.videoHeight;
+    const cx = c.getContext('2d', { willReadFrequently: true });
+    setInterval(() => {
+      let bright = 0;
+      if (video.videoWidth) {
+        c.width = video.videoWidth;
+        c.height = video.videoHeight;
+        cx.drawImage(video, 0, 0);
+        // Look for the brightest pixel in the top-left area (the title bar can be above the content).
+        const d = cx.getImageData(0, 0, Math.min(60, c.width), Math.min(120, c.height)).data;
+        for (let i = 0; i < d.length; i += 4) bright = Math.max(bright, Math.max(d[i], d[i + 1], d[i + 2]));
+      }
+      window.regionShare.selfTestFrames(frames, bright);
+      frames = 0;
+    }, 1000);
+  })().catch((err) => console.error('Self-test capture failed:', err));
+</script>
+</body>
+</html>

@@ -6,15 +6,23 @@
 <title>RegionShare – Shared Region</title>
 <style>
   html, body { margin: 0; height: 100%; overflow: hidden; background: #000; }
-  canvas { display: block; width: 100%; height: 100%; object-fit: contain; }
+  canvas { display: block; width: 100%; height: 100%; object-fit: contain; cursor: zoom-in; }
+  canvas.zoomed { cursor: grab; }
+  canvas.panning { cursor: grabbing; }
   #status { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
-    color: #bbb; font: 14px -apple-system, "Segoe UI", sans-serif; text-align: center; padding: 20px; white-space: pre-line; }
+    color: #bbb; font: 14px -apple-system, "Segoe UI", sans-serif; text-align: center; padding: 20px;
+    white-space: pre-line; }
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
 <div id="status">Waiting for the screen capture…</div>
 <script>
+  const SELFTEST = new URLSearchParams(location.search).get('selftest') === '1';
+  const MIN_ZOOM = 1;
+  const MAX_ZOOM = 8;
+  const STEP = 1.25;
+
   const canvas = document.getElementById('c');
   const ctx = canvas.getContext('2d', { alpha: false });
   const status = document.getElementById('status');
@@ -26,10 +34,65 @@
   let stream = null;
   let streamDisplayId = null;
   let frameCount = 0;
+  let loopStarted = false;
+
+  // The view is the part of the region that the window shows.
+  // cx and cy are the center of the view, in region coordinates (DIP). z is the zoom level.
+  // "target" is where the view goes. "view" moves to the target in a short animation.
+  let target = { z: 1, cx: 0, cy: 0 };
+  let view = { z: 1, cx: 0, cy: 0 };
 
   function showStatus(text) {
     status.textContent = text;
     status.style.display = text ? 'flex' : 'none';
+  }
+
+  function clamp(n, lo, hi) { return Math.min(Math.max(n, lo), hi); }
+
+  // Keep the view inside the region.
+  function clampView(v) {
+    v.z = clamp(v.z, MIN_ZOOM, MAX_ZOOM);
+    const halfW = region.width / v.z / 2;
+    const halfH = region.height / v.z / 2;
+    v.cx = clamp(v.cx, halfW, region.width - halfW);
+    v.cy = clamp(v.cy, halfH, region.height - halfH);
+  }
+
+  let lastReported = 1;
+  function reportZoom() {
+    const z = Math.round(target.z * 10) / 10;
+    if (z !== lastReported) {
+      lastReported = z;
+      window.regionShare.zoomChanged(z);
+    }
+    canvas.classList.toggle('zoomed', target.z > 1.001);
+  }
+
+  function resetView() {
+    target = { z: 1, cx: region.width / 2, cy: region.height / 2 };
+    reportZoom();
+  }
+
+  // Zoom by "factor". The point (px, py) in region coordinates stays in the same place.
+  // Without a point, the zoom uses the center of the view.
+  function zoomAt(factor, px, py) {
+    const z = clamp(target.z * factor, MIN_ZOOM, MAX_ZOOM);
+    if (px == null) { px = target.cx; py = target.cy; }
+    target.cx = px - (px - target.cx) * (target.z / z);
+    target.cy = py - (py - target.cy) * (target.z / z);
+    target.z = z;
+    clampView(target);
+    reportZoom();
+  }
+
+  // Change a point in the window to a point in the region.
+  function windowToRegion(clientX, clientY) {
+    const vw = region.width / view.z;
+    const vh = region.height / view.z;
+    return {
+      x: view.cx - vw / 2 + (clientX / window.innerWidth) * vw,
+      y: view.cy - vh / 2 + (clientY / window.innerHeight) * vh,
+    };
   }
 
   async function startStream() {
@@ -58,7 +121,7 @@
     video.srcObject = stream;
     await video.play();
     showStatus('');
-    loop();
+    startLoop();
   }
 
   function draw() {
@@ -66,33 +129,133 @@
     // The video has physical pixels. The region has DIP. Convert with the measured scale.
     const sx = video.videoWidth / region.displayWidth;
     const sy = video.videoHeight / region.displayHeight;
+    // The canvas keeps the full resolution of the region. When you zoom in,
+    // the canvas shows a smaller area at the same size.
     const w = Math.max(1, Math.round(region.width * sx));
     const h = Math.max(1, Math.round(region.height * sy));
     if (canvas.width !== w || canvas.height !== h) {
       canvas.width = w;
       canvas.height = h;
     }
-    ctx.drawImage(video, region.x * sx, region.y * sy, region.width * sx, region.height * sy, 0, 0, w, h);
+    const vw = region.width / view.z;
+    const vh = region.height / view.z;
+    const left = region.x + view.cx - vw / 2;
+    const top = region.y + view.cy - vh / 2;
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(video, left * sx, top * sy, vw * sx, vh * sy, 0, 0, w, h);
+    if (SELFTEST) {
+      // Change a few pixels on each frame, so that a window capture always gets new frames.
+      ctx.fillStyle = frameCount % 2 ? '#ff00ff' : '#00ff00';
+      ctx.fillRect(0, 0, 8, 8);
+    }
     frameCount++;
   }
 
-  function loop() {
+  // Move the view toward the target. Return true while the view moves.
+  function animate() {
+    const k = 0.35;
+    const dz = target.z - view.z, dx = target.cx - view.cx, dy = target.cy - view.cy;
+    if (Math.abs(dz) < 0.001 && Math.abs(dx) < 0.1 && Math.abs(dy) < 0.1) {
+      view = { ...target };
+      return false;
+    }
+    view = { z: view.z + dz * k, cx: view.cx + dx * k, cy: view.cy + dy * k };
+    return true;
+  }
+
+  function startLoop() {
+    if (loopStarted) return;
+    loopStarted = true;
     if ('requestVideoFrameCallback' in video) {
       const tick = () => { draw(); video.requestVideoFrameCallback(tick); };
       video.requestVideoFrameCallback(tick);
     }
-    // A timer also draws. The video frame callback can stop while the window is hidden.
-    setInterval(draw, 1000 / 30);
+    // A timer also draws. The video frame callback can stop while the window is hidden,
+    // and the timer also runs the zoom animation.
+    setInterval(() => {
+      if (animate() || SELFTEST) draw();
+    }, 1000 / 30);
+    setInterval(draw, 1000 / 10);
   }
+
+  // ---------- Mouse and keys in the mirror window ----------
+
+  // The scroll wheel zooms at the mouse pointer.
+  window.addEventListener('wheel', (e) => {
+    if (!region) return;
+    e.preventDefault();
+    const p = windowToRegion(e.clientX, e.clientY);
+    zoomAt(Math.exp(-e.deltaY * 0.0025), p.x, p.y);
+  }, { passive: false });
+
+  // A drag moves the view when you are zoomed in. A click without a drag zooms in.
+  let drag = null;
+  window.addEventListener('mousedown', (e) => {
+    if (!region || e.button !== 0) return;
+    drag = { x: e.clientX, y: e.clientY, moved: false };
+  });
+  window.addEventListener('mousemove', (e) => {
+    if (!drag) return;
+    const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+    if (!drag.moved && Math.hypot(dx, dy) < 4) return;
+    drag.moved = true;
+    canvas.classList.add('panning');
+    target.cx -= (dx / window.innerWidth) * (region.width / target.z);
+    target.cy -= (dy / window.innerHeight) * (region.height / target.z);
+    clampView(target);
+    view = { ...target };
+    drag.x = e.clientX;
+    drag.y = e.clientY;
+  });
+  window.addEventListener('mouseup', (e) => {
+    if (!drag) return;
+    canvas.classList.remove('panning');
+    if (!drag.moved && target.z <= 1.001) {
+      const p = windowToRegion(e.clientX, e.clientY);
+      zoomAt(2, p.x, p.y);
+    }
+    drag = null;
+  });
+  // A double-click resets the zoom.
+  window.addEventListener('dblclick', () => { if (region) resetView(); });
+
+  window.addEventListener('keydown', (e) => {
+    if (!region) return;
+    const pan = (region.width / target.z) * 0.1;
+    switch (e.key) {
+      case '+': case '=': zoomAt(STEP); break;
+      case '-': case '_': zoomAt(1 / STEP); break;
+      case '0': resetView(); break;
+      case 'ArrowLeft': target.cx -= pan; clampView(target); break;
+      case 'ArrowRight': target.cx += pan; clampView(target); break;
+      case 'ArrowUp': target.cy -= pan; clampView(target); break;
+      case 'ArrowDown': target.cy += pan; clampView(target); break;
+      default: return;
+    }
+    e.preventDefault();
+  });
+
+  // ---------- Messages from the main process ----------
+
+  window.regionShare.onZoomCommand(({ action, point }) => {
+    if (!region) return;
+    if (action === 'reset') resetView();
+    else zoomAt(action === 'in' ? STEP : 1 / STEP, point && point.x, point && point.y);
+  });
 
   // Information for tests. The main process does not use it.
   window.__regionShareStats = () => ({
     videoWidth: video.videoWidth, videoHeight: video.videoHeight,
-    canvasWidth: canvas.width, canvasHeight: canvas.height, frameCount,
+    canvasWidth: canvas.width, canvasHeight: canvas.height, frameCount, zoom: view.z,
   });
 
   window.regionShare.onRegion((r) => {
     region = r;
+    target = { z: 1, cx: r.width / 2, cy: r.height / 2 };
+    view = { ...target };
+    lastReported = 1;
+    reportZoom();
     if (!stream || streamDisplayId !== r.displayId) startStream();
   });
 </script>

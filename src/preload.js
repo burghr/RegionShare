@@ -5,4 +5,8 @@ contextBridge.exposeInMainWorld('regionShare', {
   selectionDone: (sel) => ipcRenderer.send('selection:done', sel),
   selectionCancel: () => ipcRenderer.send('selection:cancel'),
   onRegion: (cb) => ipcRenderer.on('region:update', (_e, r) => cb(r)),
+  onZoomCommand: (cb) => ipcRenderer.on('zoom:command', (_e, cmd) => cb(cmd)),
+  zoomChanged: (level) => ipcRenderer.send('zoom:changed', level),
+  onZoomLevel: (cb) => ipcRenderer.on('zoom:level', (_e, level) => cb(level)),
+  selfTestFrames: (n, bright) => ipcRenderer.send('selftest:frames', n, bright),
 });

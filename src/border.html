@@ -6,14 +6,28 @@
 <title>RegionShare – Border</title>
 <style>
   html, body { margin: 0; height: 100%; overflow: hidden; background: transparent; }
-  #frame { position: fixed; inset: 0; box-sizing: border-box; border: 3px solid #ff3b30; }
+  #frame { position: fixed; left: 0; right: 0; bottom: 0; box-sizing: border-box; border: 3px solid #ff3b30; }
+  #label { position: fixed; left: 0; top: 0; display: none; padding: 2px 8px; border-radius: 4px 4px 0 0;
+    background: #ff3b30; color: #fff; font: 600 12px/18px -apple-system, "Segoe UI", sans-serif; }
 </style>
 </head>
 <body>
+<div id="label"></div>
 <div id="frame"></div>
 <script>
-  const px = new URLSearchParams(location.search).get('px') || '3';
-  document.getElementById('frame').style.borderWidth = px + 'px';
+  const q = new URLSearchParams(location.search);
+  const px = Number(q.get('px') || 3);
+  const labelPx = Number(q.get('label') || 22);
+  const frame = document.getElementById('frame');
+  const label = document.getElementById('label');
+  frame.style.borderWidth = px + 'px';
+  frame.style.top = labelPx + 'px';
+  label.style.height = (labelPx - 4) + 'px';
+  label.style.top = '4px';
+  window.regionShare.onZoomLevel((level) => {
+    label.textContent = `Zoom ${level.toFixed(1)}×`;
+    label.style.display = level > 1.001 ? 'block' : 'none';
+  });
 </script>
 </body>
 </html>

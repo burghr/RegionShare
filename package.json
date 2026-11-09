@@ -1,7 +1,7 @@
 {
   "name": "regionshare",
   "productName": "RegionShare",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Share only a part of your screen in Teams (or any app that can share a window).",
   "main": "src/main.js",
   "scripts": {
