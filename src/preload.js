@@ -8,5 +8,7 @@ contextBridge.exposeInMainWorld('regionShare', {
   onZoomCommand: (cb) => ipcRenderer.on('zoom:command', (_e, cmd) => cb(cmd)),
   zoomChanged: (level) => ipcRenderer.send('zoom:changed', level),
   onZoomLevel: (cb) => ipcRenderer.on('zoom:level', (_e, level) => cb(level)),
+  onQuality: (cb) => ipcRenderer.on('quality', (_e, q) => cb(q)),
+  captureInfo: (info) => ipcRenderer.send('capture:info', info),
   selfTestFrames: (n, bright) => ipcRenderer.send('selftest:frames', n, bright),
 });

@@ -2,7 +2,7 @@
 // The app captures one rectangle of a display and shows it live in a normal window.
 // You then share that window in Teams (or any other app that can share a window).
 const {
-  app, BrowserWindow, Tray, Menu, screen, desktopCapturer, session, webContents,
+  app, BrowserWindow, Tray, Menu, Notification, screen, desktopCapturer, session, webContents,
   ipcMain, nativeImage, systemPreferences, dialog, shell, globalShortcut,
 } = require('electron');
 const path = require('path');
@@ -37,6 +37,9 @@ let borderWin = null;
 let selectorWins = [];
 let showBorder = true;
 let zoomLevel = 1;
+let sizeScale = 1; // the shared window size: 1 = actual size, 2 = double size, 0 = fit
+let sharpScaling = true; // copy pixels without smoothing at whole-number scales
+let captureInfo = null; // the size of the capture, from the mirror page
 // The region in DIP (device-independent pixels), relative to the top-left of its display.
 let region = null;
 // The bounds of the mirror window before the app moved it off the screen.
@@ -152,20 +155,26 @@ function setRegion(r) {
   updateBorder();
   const win = liveMirror();
   if (win) {
-    win.setAspectRatio(region.width / region.height);
-    if (!parkedBounds) {
-      const [w] = win.getContentSize();
-      win.setContentSize(w, Math.round((w * region.height) / region.width));
-    }
     win.webContents.send('region:update', regionPayload());
+    applyMirrorSize();
   } else {
     openMirror();
   }
   updateMenu();
 }
 
-// Find a size for the mirror window. Keep the aspect ratio of the region.
+// The content size of the shared window, in DIP.
+// With sizeScale 1 or 2, each region pixel is 1 or 2 window pixels. A whole-number
+// scale keeps text sharp. Teams shares the window pixels, so a larger window gives
+// a sharper image to the viewers.
+// With sizeScale 0, the window fits the free space. The image is then often smaller
+// than the region, and text is blurry.
 function mirrorSize(maxW, maxH) {
+  if (sizeScale > 0) {
+    let k = sizeScale;
+    while (k > 1 && (region.width * k > maxW || region.height * k > maxH)) k--;
+    return { width: region.width * k, height: region.height * k };
+  }
   let w = Math.min(region.width, maxW);
   let h = Math.round((w * region.height) / region.width);
   if (h > maxH) {
@@ -175,18 +184,24 @@ function mirrorSize(maxW, maxH) {
   return { width: Math.max(160, w), height: Math.max(90, h) };
 }
 
-// Put the mirror window outside the region. If the window is inside the region,
-// the capture shows a mirror inside a mirror.
+// The content bounds of the shared window (DIP). Put the window outside the region.
+// If the window is inside the region, the capture shows a mirror inside a mirror.
+// "park" is true when the window does not fit next to the region. The app then
+// moves the window off the screen, and the share stays live.
+const TITLE_BAR = 40; // room for the title bar of the window
 function mirrorBounds() {
   const regionDisplay = displayById(region.displayId);
   const other = screen.getAllDisplays().find((d) => d.id !== regionDisplay.id);
   if (other) {
     const wa = other.workArea;
-    const size = mirrorSize(wa.width * 0.6, wa.height * 0.6);
+    const size = sizeScale > 0
+      ? mirrorSize(wa.width, wa.height - TITLE_BAR)
+      : mirrorSize(wa.width * 0.6, wa.height * 0.6);
     return {
-      x: Math.round(wa.x + (wa.width - size.width) / 2),
-      y: Math.round(wa.y + (wa.height - size.height) / 2),
+      x: Math.round(wa.x + Math.max(0, wa.width - size.width) / 2),
+      y: Math.round(wa.y + TITLE_BAR + Math.max(0, wa.height - TITLE_BAR - size.height) / 2),
       ...size,
+      park: false,
     };
   }
   const wa = regionDisplay.workArea;
@@ -195,29 +210,74 @@ function mirrorBounds() {
   const room = {
     right: wa.x + wa.width - (r.x + r.width) - gap * 2,
     left: r.x - wa.x - gap * 2,
-    below: wa.y + wa.height - (r.y + r.height) - gap * 2,
-    above: r.y - wa.y - gap * 2,
+    below: wa.y + wa.height - (r.y + r.height) - gap * 2 - TITLE_BAR,
+    above: r.y - wa.y - gap * 2 - TITLE_BAR,
   };
-  const side = Object.keys(room).sort((a, b) => room[b] - room[a])[0];
-  const horizontal = side === 'right' || side === 'left';
-  const size = horizontal
-    ? mirrorSize(Math.max(160, room[side]), wa.height * 0.8)
-    : mirrorSize(wa.width * 0.8, Math.max(90, room[side]));
+  const horizontal = (side) => side === 'right' || side === 'left';
+  let size;
+  let side;
+  if (sizeScale > 0) {
+    size = mirrorSize(wa.width, wa.height - TITLE_BAR);
+    // Use a side where the full size fits. If no side has the room, park the window.
+    side = Object.keys(room).find((k) => (horizontal(k)
+      ? room[k] >= size.width && wa.height - TITLE_BAR >= size.height
+      : room[k] >= size.height && wa.width >= size.width));
+  } else {
+    side = Object.keys(room).sort((a, b) => room[b] - room[a])[0];
+    size = horizontal(side)
+      ? mirrorSize(Math.max(160, room[side]), wa.height * 0.8)
+      : mirrorSize(wa.width * 0.8, Math.max(90, room[side]));
+  }
+  const park = !side;
+  side = side || 'right';
   const pos = {
     right: { x: r.x + r.width + gap, y: r.y },
     left: { x: r.x - gap - size.width, y: r.y },
-    below: { x: r.x, y: r.y + r.height + gap },
+    below: { x: r.x, y: r.y + r.height + gap + TITLE_BAR },
     above: { x: r.x, y: r.y - gap - size.height },
   }[side];
   // Keep the window on the display.
-  pos.x = Math.min(Math.max(pos.x, wa.x), wa.x + wa.width - size.width);
-  pos.y = Math.min(Math.max(pos.y, wa.y), wa.y + wa.height - size.height);
-  return { ...pos, ...size };
+  pos.x = Math.min(Math.max(pos.x, wa.x), wa.x + Math.max(0, wa.width - size.width));
+  pos.y = Math.min(Math.max(pos.y, wa.y + TITLE_BAR), wa.y + Math.max(TITLE_BAR, wa.height - size.height));
+  return { ...pos, ...size, park };
+}
+
+// Tell the user one time why the shared window is not on the screen.
+let parkNoticeShown = false;
+function noticeParked() {
+  if (parkNoticeShown || SELFTEST) return;
+  parkNoticeShown = true;
+  if (!Notification.isSupported()) return;
+  new Notification({
+    title: 'RegionShare',
+    body: 'The shared window does not fit next to the region, so it is hidden off the screen. '
+      + 'The share stays live. In Teams, share the window "RegionShare – Shared Region".',
+  }).show();
+}
+
+// Set the size of the shared window again, for example after a new region or a new size option.
+function applyMirrorSize() {
+  const win = liveMirror();
+  if (!win || !region) return;
+  const b = mirrorBounds();
+  win.setAspectRatio(0);
+  if (parkedBounds || b.park) {
+    win.setContentSize(b.width, b.height);
+    const outer = win.getBounds();
+    parkedBounds = { x: b.x, y: b.y - (outer.height - b.height), width: outer.width, height: outer.height };
+    parkMirror();
+    if (b.park) noticeParked();
+  } else {
+    win.setContentBounds({ x: b.x, y: b.y, width: b.width, height: b.height });
+  }
+  win.setAspectRatio(region.width / region.height);
 }
 
 function openMirror() {
   const b = mirrorBounds();
   parkedBounds = null;
+  const startParked = b.park;
+  delete b.park;
   mirrorWin = new BrowserWindow({
     ...b,
     useContentSize: true,
@@ -233,7 +293,12 @@ function openMirror() {
   win.loadFile(path.join(__dirname, 'mirror.html'), { query: { selftest: SELFTEST ? '1' : '' } });
   win.webContents.once('did-finish-load', () => {
     win.webContents.send('region:update', regionPayload());
+    win.webContents.send('quality', { sharp: sharpScaling });
   });
+  if (startParked) {
+    parkMirror();
+    noticeParked();
+  }
   if (process.env.REGIONSHARE_DEBUG) {
     // Print the capture statistics every two seconds, for tests.
     const timer = setInterval(async () => {
@@ -372,6 +437,7 @@ function updateBorder() {
 
 function stopSharing() {
   region = null;
+  captureInfo = null;
   zoomLevel = 1;
   updateDock();
   parkedBounds = null;
@@ -380,6 +446,12 @@ function stopSharing() {
   const win = liveMirror();
   mirrorWin = null;
   if (win) win.close();
+  updateMenu();
+}
+
+function setSizeScale(k) {
+  sizeScale = k;
+  applyMirrorSize();
   updateMenu();
 }
 
@@ -398,6 +470,11 @@ function zoom(action) {
     point: inside ? { x: c.x - r.x, y: c.y - r.y } : null,
   });
 }
+
+ipcMain.on('capture:info', (_e, info) => {
+  captureInfo = info;
+  updateMenu();
+});
 
 ipcMain.on('zoom:changed', (_e, level) => {
   zoomLevel = level;
@@ -544,6 +621,25 @@ function updateMenu() {
     { label: `Reset Zoom (${L.zoomReset})`, enabled: sharing && zoomLevel > 1, click: () => zoom('reset') },
     { type: 'separator' },
     {
+      label: 'Shared Window Size',
+      enabled: sharing,
+      submenu: [
+        { label: 'Actual Size (1:1, sharp)', type: 'radio', checked: sizeScale === 1, click: () => setSizeScale(1) },
+        { label: 'Double Size (2×, sharper for viewers)', type: 'radio', checked: sizeScale === 2, click: () => setSizeScale(2) },
+        { label: 'Fit Next to the Region (can be blurry)', type: 'radio', checked: sizeScale === 0, click: () => setSizeScale(0) },
+      ],
+    },
+    {
+      label: 'Sharp Scaling',
+      type: 'checkbox',
+      checked: sharpScaling,
+      click: (item) => {
+        sharpScaling = item.checked;
+        const win = liveMirror();
+        if (win) win.webContents.send('quality', { sharp: sharpScaling });
+      },
+    },
+    {
       label: 'Show Border Around Region',
       type: 'checkbox',
       checked: showBorder,
@@ -554,7 +650,14 @@ function updateMenu() {
     { label: 'Quit RegionShare', role: 'quit' },
   ]));
   const zoomText = zoomLevel > 1 ? `, zoom ${zoomLevel.toFixed(1)}×` : '';
-  tray.setToolTip(sharing ? `RegionShare – ${region.width}×${region.height}${zoomText}` : 'RegionShare');
+  let captureText = '';
+  if (captureInfo) {
+    captureText = `\nCapture ${captureInfo.videoWidth}×${captureInfo.videoHeight}`;
+    if (captureInfo.videoWidth < captureInfo.expectedWidth) {
+      captureText += ` (lower than the display: ${captureInfo.expectedWidth}×${captureInfo.expectedHeight})`;
+    }
+  }
+  tray.setToolTip(sharing ? `RegionShare – ${region.width}×${region.height}${zoomText}${captureText}` : 'RegionShare');
 }
 
 // ---------- Start ----------
@@ -601,6 +704,9 @@ app.whenReady().then(async () => {
     if (region && !screen.getAllDisplays().some((d) => d.id === region.displayId)) stopSharing();
   });
   await checkMacPermission();
+  // For tests: --size=0, 1, or 2 sets the shared window size.
+  const sizeArg = process.argv.find((x) => x.startsWith('--size='));
+  if (sizeArg && ['0', '1', '2'].includes(sizeArg.slice(7))) sizeScale = Number(sizeArg.slice(7));
   const fromArgs = regionFromArgs();
   // At the start, the app only adds its icon to the menu bar or the tray.
   if (fromArgs) setRegion(fromArgs);

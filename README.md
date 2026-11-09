@@ -32,6 +32,20 @@ Zoom in to show a larger image of a smaller part of the region. The border shows
 
 When the mouse pointer is in the region, the shortcuts zoom at the pointer.
 
+## Image quality
+
+Teams shares the pixels of the shared window. For sharp text, the window must show the region at its full
+size, without a scale step. Use the tray menu to set the quality:
+
+- **Shared Window Size > Actual Size (1:1, sharp)** (default): each pixel of the region is one pixel of the window.
+- **Shared Window Size > Double Size (2×)**: each pixel of the region is 2 × 2 pixels of the window. Viewers on large screens see sharper text, because Teams does not scale up a small image.
+- **Shared Window Size > Fit Next to the Region**: the window fits the free space next to the region. If the window is smaller than the region, text is blurry.
+- **Sharp Scaling** (on by default): at 1:1 and 2×, the app copies the pixels without smoothing.
+
+If the full-size window does not fit next to the region, the app hides the window off the screen. The share
+stays live. The tray tooltip shows the capture size. If the capture is smaller than the display, the
+tooltip says so.
+
 ## Hide the shared window
 
 A minimized window does not draw, so a share in Teams stops. For this reason, RegionShare does not

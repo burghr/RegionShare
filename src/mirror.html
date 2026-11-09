@@ -6,7 +6,8 @@
 <title>RegionShare – Shared Region</title>
 <style>
   html, body { margin: 0; height: 100%; overflow: hidden; background: #000; }
-  canvas { display: block; width: 100%; height: 100%; object-fit: contain; cursor: zoom-in; }
+  /* The canvas fills the window. Its pixels are the physical pixels of the window, so the browser does not scale it. */
+  canvas { display: block; width: 100vw; height: 100vh; cursor: zoom-in; }
   canvas.zoomed { cursor: grab; }
   canvas.panning { cursor: grabbing; }
   #status { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
@@ -35,6 +36,22 @@
   let streamDisplayId = null;
   let frameCount = 0;
   let loopStarted = false;
+  let lastDraw = null;
+  let sharp = true;
+  // The size of the canvas in physical pixels. A ResizeObserver gives the exact value.
+  let outW = 0, outH = 0;
+  const sizeObserver = new ResizeObserver((entries) => {
+    const e = entries[0];
+    if (e.devicePixelContentBoxSize) {
+      outW = e.devicePixelContentBoxSize[0].inlineSize;
+      outH = e.devicePixelContentBoxSize[0].blockSize;
+    } else {
+      outW = Math.round(e.contentRect.width * window.devicePixelRatio);
+      outH = Math.round(e.contentRect.height * window.devicePixelRatio);
+    }
+    draw();
+  });
+  sizeObserver.observe(canvas, { box: 'device-pixel-content-box' });
 
   // The view is the part of the region that the window shows.
   // cx and cy are the center of the view, in region coordinates (DIP). z is the zoom level.
@@ -121,34 +138,52 @@
     video.srcObject = stream;
     await video.play();
     showStatus('');
+    window.regionShare.captureInfo({
+      videoWidth: video.videoWidth,
+      videoHeight: video.videoHeight,
+      expectedWidth: Math.round(region.displayWidth * region.scaleFactor),
+      expectedHeight: Math.round(region.displayHeight * region.scaleFactor),
+    });
     startLoop();
   }
 
   function draw() {
-    if (!region || !video.videoWidth) return;
+    if (!region || !video.videoWidth || !outW || !outH) return;
     // The video has physical pixels. The region has DIP. Convert with the measured scale.
     const sx = video.videoWidth / region.displayWidth;
     const sy = video.videoHeight / region.displayHeight;
-    // The canvas keeps the full resolution of the region. When you zoom in,
-    // the canvas shows a smaller area at the same size.
-    const w = Math.max(1, Math.round(region.width * sx));
-    const h = Math.max(1, Math.round(region.height * sy));
-    if (canvas.width !== w || canvas.height !== h) {
-      canvas.width = w;
-      canvas.height = h;
+    if (canvas.width !== outW || canvas.height !== outH) {
+      canvas.width = outW;
+      canvas.height = outH;
     }
+    // The source rectangle in video pixels. Round to whole pixels: a crop that starts
+    // between two pixels makes the browser mix pixels, and the text gets soft.
     const vw = region.width / view.z;
     const vh = region.height / view.z;
-    const left = region.x + view.cx - vw / 2;
-    const top = region.y + view.cy - vh / 2;
-    ctx.imageSmoothingEnabled = true;
+    const srcW = Math.max(1, Math.round(vw * sx));
+    const srcH = Math.max(1, Math.round(vh * sy));
+    const maxL = video.videoWidth - srcW, maxT = video.videoHeight - srcH;
+    const srcL = clamp(Math.round((region.x + view.cx - vw / 2) * sx), 0, maxL);
+    const srcT = clamp(Math.round((region.y + view.cy - vh / 2) * sy), 0, maxT);
+    // Fit the source in the canvas. Keep the aspect ratio.
+    const scale = Math.min(outW / srcW, outH / srcH);
+    const dw = Math.round(srcW * scale), dh = Math.round(srcH * scale);
+    const dx = Math.floor((outW - dw) / 2), dy = Math.floor((outH - dh) / 2);
+    // At a whole-number scale (1:1 or 2x), copy the pixels without smoothing. Text stays sharp.
+    const whole = Math.abs(scale - Math.round(scale)) < 0.02 && scale >= 0.98;
+    ctx.imageSmoothingEnabled = !(sharp && whole);
     ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(video, left * sx, top * sy, vw * sx, vh * sy, 0, 0, w, h);
+    if (dw !== outW || dh !== outH) {
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, outW, outH);
+    }
+    ctx.drawImage(video, srcL, srcT, srcW, srcH, dx, dy, dw, dh);
     if (SELFTEST) {
       // Change a few pixels on each frame, so that a window capture always gets new frames.
       ctx.fillStyle = frameCount % 2 ? '#ff00ff' : '#00ff00';
       ctx.fillRect(0, 0, 8, 8);
     }
+    lastDraw = { srcW, srcH, dw, dh, smoothing: ctx.imageSmoothingEnabled };
     frameCount++;
   }
 
@@ -248,7 +283,10 @@
   window.__regionShareStats = () => ({
     videoWidth: video.videoWidth, videoHeight: video.videoHeight,
     canvasWidth: canvas.width, canvasHeight: canvas.height, frameCount, zoom: view.z,
+    dpr: window.devicePixelRatio, lastDraw,
   });
+
+  window.regionShare.onQuality((q) => { sharp = !!q.sharp; draw(); });
 
   window.regionShare.onRegion((r) => {
     region = r;
