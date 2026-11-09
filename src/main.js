@@ -33,6 +33,9 @@ const SELFTEST = process.env.REGIONSHARE_SELFTEST || '';
 
 let tray = null;
 let mirrorWin = null;
+let toolbarWin = null;
+const TOOLBAR_W = 330;
+const TOOLBAR_H = 36;
 let borderWin = null;
 let selectorWins = [];
 let showBorder = true;
@@ -290,11 +293,16 @@ function openMirror() {
   });
   const win = mirrorWin;
   win.setAspectRatio(region.width / region.height);
-  win.loadFile(path.join(__dirname, 'mirror.html'), { query: { selftest: SELFTEST ? '1' : '' } });
+  win.loadFile(path.join(__dirname, 'mirror.html'), {
+    query: { selftest: SELFTEST ? '1' : '', control: SELFTEST === 'toolbarcontrol' ? '1' : '' },
+  });
   win.webContents.once('did-finish-load', () => {
     win.webContents.send('region:update', regionPayload());
     win.webContents.send('quality', { sharp: sharpScaling });
   });
+  openToolbar(win);
+  win.on('move', placeToolbar);
+  win.on('resize', placeToolbar);
   if (startParked) {
     parkMirror();
     noticeParked();
@@ -325,6 +333,58 @@ function openMirror() {
   });
 }
 
+// A small bar with a "Hide this window" button, on top of the shared window.
+// The bar is a separate window, so a window share in Teams does not show it.
+// Content protection also keeps the bar out of screen captures.
+function openToolbar(parent) {
+  toolbarWin = new BrowserWindow({
+    parent,
+    width: TOOLBAR_W,
+    height: TOOLBAR_H,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    hasShadow: false,
+    show: false,
+    webPreferences: { preload: PRELOAD },
+  });
+  const bar = toolbarWin;
+  bar.setContentProtection(true);
+  bar.loadFile(path.join(__dirname, 'toolbar.html'), { query: { selftest: SELFTEST ? '1' : '' } });
+  bar.once('ready-to-show', () => {
+    placeToolbar();
+    if (!parkedBounds) bar.showInactive();
+  });
+  bar.on('closed', () => {
+    if (toolbarWin === bar) toolbarWin = null;
+  });
+}
+
+function liveToolbar() {
+  return toolbarWin && !toolbarWin.isDestroyed() ? toolbarWin : null;
+}
+
+// Put the bar at the top center of the shared window content.
+function placeToolbar() {
+  const win = liveMirror();
+  const bar = liveToolbar();
+  if (!win || !bar || parkedBounds) return;
+  const c = win.getContentBounds();
+  bar.setBounds({
+    x: Math.round(c.x + (c.width - TOOLBAR_W) / 2),
+    y: c.y + 8,
+    width: TOOLBAR_W,
+    height: TOOLBAR_H,
+  });
+}
+
+ipcMain.on('mirror:hide', () => parkMirror());
+
 // The union of all displays, in DIP.
 function desktopBounds() {
   const all = screen.getAllDisplays().map((d) => d.bounds);
@@ -339,6 +399,7 @@ function parkMirror() {
   const win = liveMirror();
   if (!win) return;
   parkBusy = true;
+  if (liveToolbar()) toolbarWin.hide();
   if (win.isMinimized()) win.restore();
   if (!parkedBounds) parkedBounds = win.getBounds();
   const desk = desktopBounds();
@@ -376,6 +437,8 @@ function unparkMirror() {
   }
   win.show();
   win.focus();
+  placeToolbar();
+  if (liveToolbar()) toolbarWin.showInactive();
   updateMenu();
 }
 
@@ -557,8 +620,41 @@ function runZoomTest() {
   setTimeout(() => app.exit(0), t + 500);
 }
 
+// REGIONSHARE_SELFTEST=toolbar: capture the shared window, as Teams does, and count
+// the pixels with the test color of the toolbar (cyan). The count must be 0.
+function runToolbarTest() {
+  const cyan = [];
+  ipcMain.on('selftest:frames', (_e, _n, _b, c) => cyan.push(c));
+  setTimeout(() => {
+    selfTestWin = new BrowserWindow({
+      show: false,
+      width: 320,
+      height: 200,
+      webPreferences: { preload: PRELOAD, backgroundThrottling: false },
+    });
+    selfTestWin.loadFile(path.join(__dirname, 'selftest.html'));
+  }, 3000);
+  setTimeout(() => {
+    const bar = liveToolbar();
+    console.log('[selftest] toolbar visible', bar && bar.isVisible(), 'bounds', bar && JSON.stringify(bar.getBounds()),
+      'mirror content', JSON.stringify(mirrorWin.getContentBounds()));
+    console.log('[selftest] cyan pixels in the window capture, each second:', JSON.stringify(cyan));
+    const ok = cyan.length >= 3 && cyan.every((c) => c === 0);
+    console.log(`[selftest] mode=${SELFTEST} result=${ok ? 'NOT IN SHARE' : 'IN SHARE'}`);
+    // Click the button in the bar. The shared window must go off the screen.
+    if (bar) bar.webContents.executeJavaScript("document.getElementById('hide').click()");
+  }, 10000);
+  setTimeout(() => {
+    const bar = liveToolbar();
+    console.log('[selftest] after the click: parked', !!parkedBounds, 'bar visible', !!(bar && bar.isVisible()),
+      'mirror', JSON.stringify(mirrorWin.getBounds()));
+    app.exit(0);
+  }, 12500);
+}
+
 function runSelfTest() {
   if (SELFTEST === 'zoom') return runZoomTest();
+  if (SELFTEST === 'toolbar' || SELFTEST === 'toolbarcontrol') return runToolbarTest();
   const counts = [];
   const bright = [];
   ipcMain.on('selftest:frames', (_e, n, b) => { counts.push(n); bright.push(b); });

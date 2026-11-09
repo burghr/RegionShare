@@ -1,0 +1,38 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+<title>RegionShare – Toolbar</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: transparent;
+    font: 600 12px -apple-system, "Segoe UI", sans-serif; user-select: none; }
+  #bar { box-sizing: border-box; height: 100%; display: flex; align-items: center; justify-content: center;
+    gap: 6px; padding: 0 6px; border-radius: 8px; background: rgba(28, 28, 30, 0.88);
+    border: 1px solid rgba(255, 255, 255, 0.18); }
+  body.selftest #bar { background: #00ffff; }
+  button { display: flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px; border: 0;
+    border-radius: 6px; background: #ff3b30; color: #fff; font: inherit; cursor: pointer; }
+  button:hover { background: #ff5147; }
+  button:focus-visible { outline: 2px solid #fff; outline-offset: 1px; }
+  svg { width: 14px; height: 14px; }
+  .note { color: rgba(255, 255, 255, 0.7); font-weight: 400; white-space: nowrap; }
+</style>
+</head>
+<body>
+<div id="bar">
+  <button id="hide" title="Move this window off the screen. The share stays live.">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M3 3l18 18"/><path d="M10.6 10.6a2 2 0 0 0 2.8 2.8"/>
+      <path d="M9.9 5.1A9.8 9.8 0 0 1 12 5c5 0 9 4.5 10 7a12.6 12.6 0 0 1-3 4.1M6.6 6.6C4.4 8 2.8 10.2 2 12c1 2.5 5 7 10 7a9.6 9.6 0 0 0 5.4-1.6"/>
+    </svg>
+    Hide this window
+  </button>
+  <span class="note">Viewers do not see this bar</span>
+</div>
+<script>
+  if (new URLSearchParams(location.search).get('selftest') === '1') document.body.classList.add('selftest');
+  document.getElementById('hide').addEventListener('click', () => window.regionShare.hideMirror());
+</script>
+</body>
+</html>

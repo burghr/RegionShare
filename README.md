@@ -49,8 +49,11 @@ tooltip says so.
 ## Hide the shared window
 
 A minimized window does not draw, so a share in Teams stops. For this reason, RegionShare does not
-minimize the shared window. When you click minimize (or **Hide Shared Window** in the menu), the app
-moves the window off the screen. The share stays live.
+minimize the shared window. Click **Hide this window** at the top of the shared window (or minimize, or
+**Hide Shared Window** in the menu). The app then moves the window off the screen. The share stays live.
+
+The **Hide this window** bar is a separate window on top of the shared window. Teams captures only the
+shared window, so the viewers do not see the bar.
 
 - **Windows:** the window goes fully off the screen. Click its taskbar button, or **Show Shared Window** in the tray menu, to bring it back.
 - **macOS:** macOS keeps a small part of the title bar (about 40 × 32 px) in the bottom-right corner of the screen. Click that part, the Dock icon, or **Show Shared Window** in the menu bar, to bring it back.
@@ -88,6 +91,9 @@ open -n --env REGIONSHARE_SELFTEST=park dist/mac-arm64/RegionShare.app --args --
 
 After about 17 seconds, a dialog shows **LIVE** or **FROZEN**. Set `REGIONSHARE_SELFTEST=nopark` to see
 the old behavior (the share freezes). Set `REGIONSHARE_SELFTEST=zoom` to test the zoom commands.
+Set `REGIONSHARE_SELFTEST=toolbar` to make sure that the window share does not show the toolbar
+(`toolbarcontrol` is the control run: it must report **IN SHARE**). The toolbar and zoom tests print
+their results to the console only.
 
 ## Test options
 

@@ -20,6 +20,8 @@
 <div id="status">Waiting for the screen capture…</div>
 <script>
   const SELFTEST = new URLSearchParams(location.search).get('selftest') === '1';
+  // Control run of the toolbar self-test: draw a cyan area in the shared window itself.
+  const CONTROL = new URLSearchParams(location.search).get('control') === '1';
   const MIN_ZOOM = 1;
   const MAX_ZOOM = 8;
   const STEP = 1.25;
@@ -182,6 +184,10 @@
       // Change a few pixels on each frame, so that a window capture always gets new frames.
       ctx.fillStyle = frameCount % 2 ? '#ff00ff' : '#00ff00';
       ctx.fillRect(0, 0, 8, 8);
+      if (CONTROL) {
+        ctx.fillStyle = '#00ffff';
+        ctx.fillRect(20, 20, 60, 20);
+      }
     }
     lastDraw = { srcW, srcH, dw, dh, smoothing: ctx.imageSmoothingEnabled };
     frameCount++;

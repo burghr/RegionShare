@@ -25,15 +25,21 @@
     const cx = c.getContext('2d', { willReadFrequently: true });
     setInterval(() => {
       let bright = 0;
+      let cyan = 0;
       if (video.videoWidth) {
         c.width = video.videoWidth;
         c.height = video.videoHeight;
         cx.drawImage(video, 0, 0);
+        // Count the pixels with the test color of the toolbar (near pure cyan).
+        const all = cx.getImageData(0, 0, c.width, c.height).data;
+        for (let i = 0; i < all.length; i += 4) {
+          if (all[i] < 30 && all[i + 1] > 225 && all[i + 2] > 225) cyan++;
+        }
         // Look for the brightest pixel in the top-left area (the title bar can be above the content).
         const d = cx.getImageData(0, 0, Math.min(60, c.width), Math.min(120, c.height)).data;
         for (let i = 0; i < d.length; i += 4) bright = Math.max(bright, Math.max(d[i], d[i + 1], d[i + 2]));
       }
-      window.regionShare.selfTestFrames(frames, bright);
+      window.regionShare.selfTestFrames(frames, bright, cyan);
       frames = 0;
     }, 1000);
   })().catch((err) => console.error('Self-test capture failed:', err));
